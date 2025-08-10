@@ -1,6 +1,14 @@
 export default async function handler(req, res) {
   const target = req.query.url;
 
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    return res.status(204).end();
+  }
+
   if (!target) {
     return res.status(400).send("Missing ?url=");
   }
@@ -18,20 +26,25 @@ export default async function handler(req, res) {
   try {
     const response = await fetch(target, { headers: customHeaders });
 
-    // Copy headers
+    // Copy response headers
     const headers = {};
     response.headers.forEach((value, key) => {
       headers[key] = value;
     });
 
-    // Add CORS
+    // Add CORS headers
     headers["Access-Control-Allow-Origin"] = "*";
     headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
     headers["Access-Control-Allow-Headers"] = "*";
 
-    // Stream binary (important for video segments)
     res.writeHead(response.status, headers);
-    response.body.pipe(res);
+
+    // Pipe video/manifest data
+    if (response.body) {
+      response.body.pipe(res);
+    } else {
+      res.end();
+    }
   } catch (err) {
     res.status(500).send(`Proxy error: ${err.message}`);
   }
