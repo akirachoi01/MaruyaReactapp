@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MARUYATV — Shaka Player</title>
+  <link rel="icon" href="https://i.imgur.com/cmOdVwr.png">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.3.6/shaka-player.compiled.js"></script>
+  <style>
+    :root{--bg:#0b0b0c;--panel:#0f1720;--muted:#9aa4b2;--accent:#06b6d4}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Arial}
+    body{background:linear-gradient(180deg,#05060a 0%,#0b0b0c 100%);color:#e6eef6}
+    .container{display:grid;grid-template-columns:1fr 320px;gap:16px;padding:16px;height:100vh;box-sizing:border-box}
+    .video-container{background:#000;border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+    video#video{width:100%;height:100%;min-height:360px;background:black}
+    .sidebar{background:var(--panel);padding:12px;border-radius:12px;display:flex;flex-direction:column}
+    .channel-list{list-style:none;margin:0;padding:0;overflow:auto}
+    .channel-item{display:flex;gap:10px;align-items:center;padding:8px;border-radius:8px;cursor:pointer}
+    .channel-item img{width:48px;height:32px;object-fit:contain;border-radius:4px}
+    .channel-item:hover{background:rgba(255,255,255,0.02)}
+    .top-controls{margin-bottom:8px}
+    .search-input{width:100%;padding:8px;border-radius:8px;border:none;background:#071022;color:inherit}
+    #loadingScreen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(2,6,23,0.85);z-index:60}
+    .spinner{width:48px;height:48px;border-radius:50%;border:4px solid rgba(255,255,255,0.06);border-top-color:var(--accent);animation:spin 1s linear infinite;margin-bottom:12px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .popupBox{background:linear-gradient(180deg,#07102a,#0b2230);padding:20px;border-radius:12px;color:#dbe9f6}
+    #popupOverlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:70}
+    .typewriter{font-family:monospace;border-right:2px solid #cfe8f0;padding:6px}
+    .channel-header{display:flex;gap:10px;align-items:center}
+    .channel-logo{width:52px;height:52px;object-fit:contain}
+    .credits{margin-top:8px;font-size:13px;color:var(--muted)}
+    #fallbackMessage{padding:18px;color:var(--muted);text-align:center}
+  </style>
+</head>
+<body>
+
+<!-- Loading Screen -->
+<div id="loadingScreen">
+  <div class="spinner"></div>
+  <div style="font-weight:700;margin-bottom:8px">MARUYATV</div>
+  <div class="typewriter" id="typewriter"></div>
+</div>
+
+<!-- Popup Overlay -->
+<div id="popupOverlay">
+  <div class="popupBox">
+    <h2>Welcome to MARUYATV</h2>
+    <p>Cute ko, Ikaw Dili.</p>
+    <div style="margin-top:12px;text-align:right"><button id="closePopupBtn">Ok!</button></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="video-container">
+    <video id="video" controls autoplay playsinline></video>
+    <div id="fallbackMessage">Select a channel from the list (right) to start playing.</div>
+  </div>
+
+  <aside class="sidebar">
+    <div class="top-controls">
+      <div class="channel-header">
+        <img src="https://i.imgur.com/cmOdVwr.png" class="channel-logo" alt="logo">
+        <div>
+          <div style="font-weight:700">MARUYATV</div>
+          <div id="clock" style="font-size:12px;color:var(--muted)"></div>
+        </div>
+      </div>
+      <div class="credits">Made by <a href="#" style="color:var(--accent)">akirachoi01</a></div>
+
+      <div id="channelCount" style="margin:8px 0;color:var(--muted)"></div>
+      <input id="searchInput" class="search-input" placeholder="Search channels...">
+    </div>
+
+    <div style="flex:1;overflow:hidden">
+      <ul id="channelList" class="channel-list"></ul>
+    </div>
+  </aside>
+</div>
+
+<script>
+const PROXY = 'https://maruya-reactapp.vercel.app/api/proxy?url=';
+
+const channels = [
+  {
+    "name": "BS Premium",
+    "group": "Converge",
+    "logo": "https://png.pngtree.com/png-vector/20230829/ourmid/pngtree-gold-color-bs-letter-logo-on-dark-gray-geometric-shape-concept-vector-png-image_9954543.png",
+    "license_type": "com.widevine.alpha",
+    "license_key": "http://143.44.136.74:9443/widevine/?deviceId=02:00:00:00:00:00",
+    "url": "http://143.44.136.110:6910/001/2/ch00000090990000001165/manifest.mpd?virtualDomain=001.live_hls.zte.com"
+  },
+  {
+    "name": "TLC",
+    "group": "Converge",
+    "logo": "https://logo.iptveditor.com/tlc.png",
+    "license_type": "com.widevine.alpha",
+    "license_key": "http://143.44.136.74:9443/widevine/?deviceId=02:00:00:00:00:00",
+    "url": "http://143.44.136.110:6910/001/2/ch00000090990000001181/manifest.mpd?virtualDomain=001.live_hls.zte.com"
+  }
+  // add remaining channels here...
+];
+
+let player;
+
+function showLoading(show){document.getElementById('loadingScreen').style.display = show? 'flex':'none'}
+
+function init() {
+  document.getElementById('closePopupBtn').addEventListener('click', ()=>document.getElementById('popupOverlay').style.display='none');
+
+  const typeEl = document.getElementById('typewriter'); 
+  const txt = 'FROM REUSORA TV'; 
+  let i=0; 
+  (function t(){ if(i<txt.length){typeEl.textContent+=txt[i++]; setTimeout(t,80)} else typeEl.style.borderRight='none'})()
+
+  setInterval(()=>{document.getElementById('clock').textContent = new Date().toLocaleString()},1000);
+
+  if (!shaka.Player.isBrowserSupported()){
+    alert('Shaka Player not supported in this browser');
+    return;
+  }
+
+  const video = document.getElementById('video');
+  player = new shaka.Player(video);
+  player.addEventListener('error', onErrorEvent);
+
+  populateList();
+  document.getElementById('searchInput').addEventListener('input', populateList);
+
+  setTimeout(()=>showLoading(false),1500);
+}
+
+function onErrorEvent(event){
+  console.error('Shaka error', event); 
+  const err = event.detail; 
+  console.error(err); 
+  alert('Player error: '+err.message);
+}
+
+function populateList(){
+  const list = document.getElementById('channelList'); list.innerHTML='';
+  const q = (document.getElementById('searchInput').value||'').toLowerCase();
+  const filtered = channels.filter(c=>c.name.toLowerCase().includes(q) || (c.group||'').toLowerCase().includes(q));
+  filtered.forEach(c=>{
+    const li = document.createElement('li'); li.className='channel-item';
+    li.innerHTML = `<img src="${c.logo}" alt=""><div style="flex:1"><div style="font-weight:600">${c.name}</div><div style="font-size:12px;color:var(--muted)">${c.group||''}</div></div>`;
+    li.onclick = ()=>playChannel(c);
+    list.appendChild(li);
+  });
+  document.getElementById('channelCount').textContent = `${filtered.length} / ${channels.length} channels`;
+}
+
+async function playChannel(channel){
+  if(!player) return;
+  document.getElementById('fallbackMessage').style.display='none';
+
+  const drmConfig = { servers: {} };
+  if(channel.license_type && channel.license_key) {
+    drmConfig.servers[channel.license_type] = PROXY + encodeURIComponent(channel.license_key);
+  }
+
+  player.configure({ drm: drmConfig });
+
+  try {
+    await player.load(PROXY + encodeURIComponent(channel.url));
+    console.log('Loaded', channel.name);
+  } catch(e) {
+    console.error('Failed to load', e);
+    alert('Failed to play channel: check console for details.');
+  }
+}
+
+window.addEventListener('load', init);
+</script>
+
+</body>
+</html>
